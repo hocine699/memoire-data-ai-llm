@@ -1,17 +1,20 @@
 import os
-import subprocess
+import requests
 from pathlib import Path
 from bs4 import BeautifulSoup
 
-# Define repository details
-repo_url = 'https://github.com/Azure/terraform.git'
-repo_name = 'terraform'
-output_dir = 'output'
+# Define repo details
+repo_owner = "MicrosoftDocs"
+repo_name = "azure-docs"
+output_dir = "output-azure-docs"
+
+api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/articles"
+
+# TODO: add ur github token here
+headers = {"Authorization": ""}
 
 os.makedirs(output_dir, exist_ok=True)
 
-if not os.path.exists(repo_name):
-    subprocess.run(['git', 'clone', repo_url])
 
 def markdown_to_text(markdown_content):
     try:
@@ -23,21 +26,41 @@ def markdown_to_text(markdown_content):
         print("Please install the 'markdown' and 'beautifulsoup4' packages.")
         return markdown_content
 
-for root, _, files in os.walk(repo_name):
-    for file in files:
-        if file.endswith('.md'):
-            md_path = Path(root) / file
 
-            with open(md_path, 'r', encoding='utf-8') as md_file:
-                md_content = md_file.read()
-                plain_text = markdown_to_text(md_content)
+def fetch_and_process_markdown(api_url, current_path=""):
+    response = requests.get(api_url, headers=headers)
 
-                relative_path = md_path.relative_to(repo_name).with_suffix('.txt')
-                output_path = Path(output_dir) / relative_path.parent
-                os.makedirs(output_path, exist_ok=True)
+    if response.status_code == 200:
+        items = response.json()
 
-                output_file = output_path / relative_path.name
-                with open(output_file, 'w', encoding='utf-8') as txt_file:
-                    txt_file.write(plain_text)
+        for item in items:
+            if item["type"] == "dir":
+                fetch_and_process_markdown(item["url"], current_path + "/" + item["name"])
 
-                print(f'Converted {md_path} -> {output_file}')
+            elif item["type"] == "file" and item["name"].endswith(".md"):
+                file_url = item["download_url"]
+                md_response = requests.get(file_url, headers=headers)
+
+                if md_response.status_code == 200:
+                    md_content = md_response.text
+                    plain_text = markdown_to_text(md_content)
+
+                    relative_path = Path(current_path) / item["name"]
+                    output_path = Path(output_dir) / relative_path
+
+                    os.makedirs(output_path.parent, exist_ok=True)
+
+                    output_path = output_path.with_suffix(".txt")
+                    with open(output_path, "w", encoding="utf-8") as txt_file:
+                        txt_file.write(plain_text)
+
+                    print(f"Processed {item['path']} -> {output_path}")
+
+                else:
+                    print(f"Failed to download {file_url}")
+
+    else:
+        print(f"Failed to fetch {api_url}, status code: {response.status_code}")
+
+
+fetch_and_process_markdown(api_url)
